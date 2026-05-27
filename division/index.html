@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>세 자리 수 나누기 두 자리 수 - 무한 도전 블록 격파!</title>
+    <style>
+        body {
+            background-color: #f0f4f8;
+            font-family: 'Malgun Gothic', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 { color: #333; margin-bottom: 10px; }
+        #setup-screen, #quiz-panel {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .btn {
+            background-color: #4ea8de;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin: 5px;
+            transition: 0.2s;
+        }
+        .btn:hover { background-color: #5390d9; }
+        #game-layout {
+            display: none;
+            flex-direction: row;
+            gap: 20px;
+            align-items: flex-start;
+        }
+        #game-container { position: relative; }
+        canvas {
+            background: #222;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+        #hud {
+            display: flex;
+            justify-content: space-between;
+            width: 600px;
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #444;
+        }
+        #quiz-panel {
+            width: 280px;
+            border: 3px solid #ffb703;
+            min-height: 350px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        #quiz-question { font-size: 26px; font-weight: bold; margin-bottom: 15px; color: #d90429; }
+        .ans-btn { display: block; width: 100%; margin: 8px 0; background-color: #74c69d; font-size: 18px; }
+        .ans-btn:hover { background-color: #52b788; }
+        #message { font-size: 16px; font-weight: bold; margin-top: 15px; height: 40px; text-align: center; }
+        #timer-display { font-size: 18px; font-weight: bold; color: #f77f00; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+
+    <h1>🔢 끝날 때까지 못 끝낸다! 수학 블록 격파</h1>
+    
+    <div id="setup-screen">
+        <h3>블록을 맞추면 20초 동안 공이 멈추고 문제가 나타납니다!</h3>
+        <p style="color: #e63946; font-weight: bold;">⚠️ 주의: 문제를 틀리면 공이 즉시 떨어집니다! 땅에 떨어지면 처음부터 재시작!</p>
+        <div>
+            <button class="btn" onclick="startGame('하')">하 (나누어떨어짐, 몫 10 내외)</button>
+            <button class="btn" onclick="startGame('중')">중 (나누어떨어짐, 몫 10~50)</button>
+            <button class="btn" onclick="startGame('상')">상 (나머지 있음, 몫과 나머지 찾기)</button>
+        </div>
+        <div style="margin-top: 15px;">
+            <label for="target-count">목표 맞출 문제 수: </label>
+            <input type="number" id="target-count" value="5" min="1" max="20" style="font-size:16px; width:50px; text-align:center;">
+        </div>
+    </div>
+
+    <div id="game-layout">
+        <div id="game-container">
+            <div id="hud">
+                <span id="hud-level">난이도: -</span>
+                <span id="hud-remain" style="color: #e63946;">남은 목표: 0개</span>
+                <span id="hud-score">점수: 0</span>
+            </div>
+            <canvas id="gameCanvas" width="600" height="400"></canvas>
+        </div>
+
+        <div id="quiz-panel">
+            <h3 style="margin-top:0; color:#555;">🚨 현재 미션 문제</h3>
+            <div id="timer-display"></div>
+            <div id="quiz-question">블록을 치세요!</div>
+            <div id="quiz-options" style="width: 100%;"></div>
+            <div id="message">블록을 깨뜨리면<br>여기에 문제가 나타납니다!</div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        let difficulty = '하';
+        let originalTarget = 5; // 리셋용 오리지널 목표 개수
+        let targetQuestions = 5;
+        let score = 0;
+        let isPlaying = false;
+        let isQuizActive = false; 
+        let isBallFrozen = false; 
+
+        let ball = { x: 300, y: 250, dx: 2.5, dy: -2.5, radius: 8 };
+        let paddle = { x: 250, y: 380, width: 110, height: 12 };
+
+        let blocks = [];
+        const blockRows = 3;
+        const blockCols = 5;
+        const blockWidth = 100;
+        const blockHeight = 30;
+        const blockPadding = 12;
+        const blockOffsetTop = 40;
+        const blockOffsetLeft = 25;
+
+        let currentProblem = null;
+        let activeBlockIndex = null;
+        let freezeTimer = null; 
+        let countdownInterval = null; 
+        let remainingSeconds = 20; // ★ 생각 시간 20초 설정
+
+        // 마우스로 바 움직이기
+        document.addEventListener("mousemove", mouseMoveHandler, false);
+        function mouseMoveHandler(e) {
+            let relativeX = e.clientX - canvas.getBoundingClientRect().left;
+            if(relativeX > 0 && relativeX < canvas.width) {
+                paddle.x = relativeX - paddle.width/2;
+            }
+        }
+
+        function generateProblem(diff) {
+            let num1, num2, q, r;
+            if (diff === '하') {
+                num2 = Math.floor(Math.random() * 5) + 11; 
+                q = Math.floor(Math.random() * 5) + 8;     
+                num1 = num2 * q; r = 0;
+            } else if (diff === '중') {
+                num2 = Math.floor(Math.random() * 15) + 12; 
+                q = Math.floor(Math.random() * 30) + 12;    
+                num1 = num2 * q; r = 0;
+            } else { 
+                num2 = Math.floor(Math.random() * 20) + 15; 
+                q = Math.floor(Math.random() * 20) + 10;    
+                r = Math.floor(Math.random() * (num2 - 1)) + 1; 
+                num1 = (num2 * q) + r;
+            }
+
+            let answerText = diff === '상' ? `몫:${q}, 남:${r}` : `${q}`;
+            let options = [answerText];
+
+            while(options.length < 3) {
+                let wrongQ = q + (Math.floor(Math.random() * 7) - 3);
+                let wrongR = diff === '상' ? Math.floor(Math.random() * num2) : 0;
+                if (wrongQ < 0) wrongQ = 0;
+                
+                let wrongText = diff === '상' ? `몫:${wrongQ}, 남:${wrongR}` : `${wrongQ}`;
+                if (!options.includes(wrongText) && wrongText !== answerText) {
+                    options.push(wrongText);
+                }
+            }
+            options.sort(() => Math.random() - 0.5);
+            return { question: `${num1} ÷ ${num2}`, answer: answerText, options: options };
+        }
+
+        function startGame(selectedDifficulty) {
+            difficulty = selectedDifficulty;
+            originalTarget = parseInt(document.getElementById("target-count").value) || 5;
+            targetQuestions = originalTarget;
+            score = 0;
+
+            document.getElementById("setup-screen").style.display = "none";
+            document.getElementById("game-layout").style.display = "flex";
+            
+            updateHUD();
+            initBlocks();
+            resetBall();
+            clearQuizPanel();
+            
+            isPlaying = true;
+            requestAnimationFrame(gameLoop);
+        }
+
+        function initBlocks() {
+            blocks = [];
+            for(let c=0; c<blockCols; c++) {
+                for(let r=0; r<blockRows; r++) {
+                    let blockX = (c*(blockWidth+blockPadding))+blockOffsetLeft;
+                    let blockY = (r*(blockHeight+blockPadding))+blockOffsetTop;
+                    let prob = generateProblem(difficulty);
+                    blocks.push({ x: blockX, y: blockY, status: 1, problem: prob });
+                }
+            }
+        }
+
+        function resetBall() {
+            ball.x = canvas.width / 2;
+            ball.y = canvas.height - 80;
+            ball.dx = (Math.random() > 0.5 ? 2.5 : -2.5);
+            ball.dy = -2.5; // 위쪽으로 출발
+            isBallFrozen = false;
+        }
+
+        function clearQuizPanel() {
+            isQuizActive = false;
+            isBallFrozen = false;
+            activeBlockIndex = null;
+            currentProblem = null;
+            clearTimers();
+            document.getElementById("timer-display").innerText = "";
+            document.getElementById("quiz-question").innerText = "블록을 치세요!";
+            document.getElementById("quiz-options").innerHTML = "";
+            document.getElementById("message").innerHTML = "블록을 깨뜨리면<br>여기에 문제가 나타납니다!";
+        }
+
+        function clearTimers() {
+            if (freezeTimer) clearTimeout(freezeTimer);
+            if (countdownInterval) clearInterval(countdownInterval);
+        }
+
+        function updateHUD() {
+            document.getElementById("hud-level").innerText = `난이도: ${difficulty}`;
+            document.getElementById("hud-remain").innerText = `남은 목표: ${targetQuestions}개`;
+            document.getElementById("hud-score").innerText = `점수: ${score}`;
+        }
+
+        function collisionDetection() {
+            for(let i=0; i<blocks.length; i++) {
+                let b = blocks[i];
+                if(b.status === 1) {
+                    if(ball.x > b.x && ball.x < b.x+blockWidth && ball.y > b.y && ball.y < b.y+blockHeight) {
+                        ball.dy = -ball.dy;
+                        
+                        if (!isQuizActive) {
+                            activateQuiz(i);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        // ★ 블록 충돌 시 20초 정지 가동
+        function activateQuiz(index) {
+            isQuizActive = true;
+            isBallFrozen = true; 
+            activeBlockIndex = index;
+            currentProblem = blocks[index].problem;
+
+            document.getElementById("quiz-question").innerText = currentProblem.question;
+            document.getElementById("message").style.color = "#333";
+            document.getElementById("message").innerText = "공이 멈춘 동안 문제를 푸세요!";
+            
+            remainingSeconds = 20; // 20초 세팅
+            document.getElementById("timer-display").innerText = `⏱️ 남은 시간: ${remainingSeconds}초`;
+            
+            clearTimers();
+
+            countdownInterval = setInterval(() => {
+                remainingSeconds--;
+                if (remainingSeconds > 0) {
+                    document.getElementById("timer-display").innerText = `⏱️ 남은 시간: ${remainingSeconds}초`;
+                } else {
+                    clearInterval(countdownInterval);
+                }
+            }, 1000);
+
+            freezeTimer = setTimeout(() => {
+                isBallFrozen = false; 
+                document.getElementById("timer-display").innerText = `🚨 공이 움직입니다!`;
+                document.getElementById("message").innerText = "시간 초과! 공이 움직입니다!";
+            }, 20000);
+            
+            const optionsDiv = document.getElementById("quiz-options");
+            optionsDiv.innerHTML = "";
+
+            currentProblem.options.forEach(opt => {
+                let btn = document.createElement("button");
+                btn.className = "btn ans-btn";
+                btn.innerText = opt;
+                btn.onclick = () => checkAnswer(opt);
+                optionsDiv.appendChild(btn);
+            });
+        }
+
+        function checkAnswer(selected) {
+            if (!isQuizActive) return;
+
+            const msgEl = document.getElementById("message");
+            
+            if (selected === currentProblem.answer) {
+                // ⭕ 정답
+                score += 100;
+                targetQuestions--; 
+                blocks[activeBlockIndex].status = 0; 
+                updateHUD();
+
+                if (targetQuestions <= 0) {
+                    isPlaying = false;
+                    clearTimers();
+                    setTimeout(() => {
+                        alert(`🎉 대단해요! 모든 목표를 해결했습니다.\n최종 점수: ${score}점`);
+                        location.reload();
+                    }, 200);
+                    return;
+                }
+
+                let activeBlocks = blocks.filter(b => b.status === 1);
+                if (activeBlocks.length === 0 && targetQuestions > 0) {
+                    initBlocks();
+                }
+
+                clearQuizPanel(); 
+            } else {
+                // ❌ 오답 규칙 적용: 즉시 공 프리징 해제 및 아래로 강제 낙하
+                clearTimers();
+                isBallFrozen = false; 
+                ball.dy = 2.5; // 아래 방향(+y)으로 속도 강제 전환!
+                
+                msgEl.style.color = "#e63946";
+                msgEl.innerText = "❌ 틀렸습니다! 공이 즉시 떨어집니다! 받으세요!";
+                document.getElementById("timer-display").innerText = `🚨 비상! 공 낙하 중!`;
+
+                // 오답 처리된 블록은 다음 번에 칠 때 새 문제가 나오도록 미리 갱신
+                blocks[activeBlockIndex].problem = generateProblem(difficulty);
+                
+                // 퀴즈 활성화 상태만 꺼두어 패널 조작 차단
+                isQuizActive = false;
+            }
+        }
+
+        function drawBall() {
+            ctx.beginPath();
+            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI*2);
+            ctx.fillStyle = isBallFrozen ? "#00b4d8" : "#ffb703";
+            ctx.fill();
+            ctx.closePath();
+        }
+
+        function drawPaddle() {
+            ctx.beginPath();
+            ctx.rect(paddle.x, paddle.y, paddle.width, paddle.height);
+            ctx.fillStyle = "#4ea8de";
+            ctx.fill();
+            ctx.closePath();
+        }
+
+        function drawBlocks() {
+            for(let i=0; i<blocks.length; i++) {
+                let b = blocks[i];
+                if(b.status === 1) {
+                    ctx.beginPath();
+                    ctx.rect(b.x, b.y, blockWidth, blockHeight);
+                    ctx.fillStyle = (isQuizActive && i === activeBlockIndex) ? "#ffb703" : "#56ab2f";
+                    ctx.fill();
+                    ctx.strokeStyle = "#fff";
+                    ctx.stroke();
+                    ctx.closePath();
+
+                    ctx.fillStyle = "#fff";
+                    ctx.font = "12px Arial";
+                    ctx.textAlign = "center";
+                    ctx.fillText("÷ 문제", b.x + blockWidth/2, b.y + 20);
+                }
+            }
+        }
+
+        function gameLoop() {
+            if (!isPlaying) return;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            drawBlocks();
+            drawBall();
+            drawPaddle();
+            
+            if (!isBallFrozen) {
+                collisionDetection();
+
+                // 벽 충돌 (좌우)
+                if(ball.x + ball.dx > canvas.width-ball.radius || ball.x + ball.dx < ball.radius) {
+                    ball.dx = -ball.dx;
+                }
+                // 벽 충돌 (위)
+                if(ball.y + ball.dy < ball.radius) {
+                    ball.dy = -ball.dy;
+                } 
+                // 바닥 영역 처리
+                else if(ball.y + ball.dy > canvas.height-ball.radius) {
+                    // 패들바에 공이 정확히 닿았을 때 (모서리 포함)
+                    if(ball.x > paddle.x && ball.x < paddle.x + paddle.width) {
+                        ball.dy = -ball.dy;
+                        // 오답 패널티 상태에서 받아쳐 올렸다면 미션창 깔끔히 초기화
+                        if (!isQuizActive) {
+                            clearQuizPanel();
+                        }
+                    } else {
+                        // 💥 공이 땅에 떨어짐 -> 완전 처음부터 다시 시작 (전체 리셋)
+                        clearQuizPanel();
+                        alert("💥 공이 바닥에 떨어졌습니다! 처음부터 다시 시작합니다!");
+                        
+                        targetQuestions = originalTarget; // 목표치 리셋
+                        score = 0; // 점수 리셋
+                        updateHUD();
+                        initBlocks(); // 블록 원상복구
+                        resetBall(); // 공 초기화
+                    }
+                }
+
+                ball.x += ball.dx;
+                ball.y += ball.dy;
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+    </script>
+</body>
+</html>
